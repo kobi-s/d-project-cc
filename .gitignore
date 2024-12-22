@@ -1,0 +1,4 @@
+*.json
+d-project-firebase-adminsdk.json
+node_modules
+/node_modules
