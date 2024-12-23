@@ -16,8 +16,8 @@ const instancesCollection = db.collection('instances');
 async function checkInstanceAvailability(instanceId, ipAddress) {
   try {
     // Try to ping the instance
-    const response = await axios.get(`http://${ipAddress}/health`, {
-      timeout: 10000 // 10 second timeout
+    const response = await axios.get(`http://${ipAddress}:3001/health`, {
+      timeout: 5000 // 5 second timeout
     });
     
     return response.status === 200;
