@@ -22,10 +22,13 @@ app.post('/connect', async (req, res) => {
     
     // Generate unique instance ID if not provided
     const instanceId = req.body.instanceId || Date.now().toString();
+    const serverRegion = req.body.region || 'None'
     
-    // Create instance document
+    // Create instance document 
     const instanceData = {
       instanceId: instanceId,
+      region: serverRegion,
+      status: "online",
       ipAddress: ipAddress,
       lastSeen: new Date().getTime(),
       rps: 0,
