@@ -61,8 +61,8 @@ async function monitorInstances() {
   }
 }
 
-// Schedule cron job to run every 2 minutes
-cron.schedule('*/1 * * * *', async () => {
+// Schedule cron job to run every 10 minutes
+cron.schedule('*/10 * * * *', async () => {
   console.log('Running instance availability check...');
   await monitorInstances();
 });
