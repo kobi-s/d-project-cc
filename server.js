@@ -114,6 +114,7 @@ app.post('/connect', async (req, res) => {
             rps: 0,
             gps: 0
         };
+        console.log('Instance Successfully connected to server: ', instanceId);
 
         // Add or update instance in Firestore
         await instancesCollection.doc(instanceId).set(instanceData, { merge: true });
@@ -137,7 +138,7 @@ app.post('/connect', async (req, res) => {
 app.post('/update', async (req, res) => {
     try {
         const { instanceId, rps, gps, processes, campaign } = req.body;
-
+        console.log(`Got updated resposne for campaign ${campaign} form instance ${instanceId}`);
         if (!instanceId) {
             return res.status(400).json({
                 status: 'error',
@@ -248,7 +249,6 @@ app.post('/start', async (req, res) => {
         // Get all online instances
         const instancesSnapshot = await instancesCollection
             .where('status', '==', 'online')
-            .where('lastSeen', '>', Date.now() - 60000)
             .get();
 
         if (instancesSnapshot.empty) {
