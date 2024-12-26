@@ -12,9 +12,8 @@ const campaignsCollection = db.collection('campaigns');
 const targetHealthCollection = db.collection('target-health'); 
 
 app.use(cors({
-    origin: ['http://localhost:5173', 'http://localhost:5174'],
-    methods: ['GET', 'POST'],
-    credentials: true
+    origin: '*',
+    methods: ['GET', 'POST']
 }));
 
 async function monitorTargetHealth(target, campaignId, duration, interval = 5) {
